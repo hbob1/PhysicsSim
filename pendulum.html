@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pendulum Simulation </title>
+
+<style>
+    body {
+        font-family: verdana;
+        font-size: 15px;
+    }
+
+    .button {
+        background-color: #606060;
+        border: none;
+        color: white;
+        padding: 15px 32px;
+        font-size: 16px;
+        margin: 4px 2px;
+        cursor: pointer;
+    }
+</style>
+
+<body>
+    <button class="button" onclick="setupScene()">Restart</button>
+    <button class="button" onclick="run()">Run</button>
+    <button class="button" onclick="step()">Step</button>
+    <p>Number of sub-steps: <input type="range" min="0" max="5" value="5" id="stepsSlider" class="slider"> <span
+            id="steps">10000</span></p>
+
+    <canvas id="myCanvas"></canvas>
+
+    <script>
+        var canvas = document.getElementById("myCanvas");
+        var c = canvas.getContext("2d");
+        canvas.width = window.innerWidth - 20;
+        canvas.height = window.innerHeight - 20;
+
+        var simMinWidth = 1.0;
+        var cScale = Math.min(canvas.width, canvas.height) / simMinWidth;
+
+        function cX(pos) { return canvas.width / 2 + pos.x * cScale; }
+        function cY(pos) { return 0.4 * canvas.height - pos.y * cScale; }
+
+
+        class Pendulum {
+            constructor(color, masses, lengths, angles) {
+                this.color = color;
+                this.masses = [0.0];
+                this.lengths = [0.0];
+                this.pos = [{ x: 0.0, y: 0.0 }];
+                this.prevPos = [{ x: 0.0, y: 0.0 }];
+                this.vel = [{ x: 0.0, y: 0.0 }];
+                this.theta = [0.0];
+                this.omega = [0.0];
+
+                this.trail = new Int32Array(1000);
+                this.trailIndex = 0;
+                this.trailLast = 0;
+                this.trailFirst = 0; 
+
+                var pushx = 0.0, pushy = 0.0;
+                for (var i = 0; i < masses.length; i++) {
+                    this.masses.push(masses[i]);
+                    this.lengths.push(lengths[i]);
+                    this.theta.push(angles[i]);
+                    this.omega.push(0.0);
+
+                    pushx += lengths[i] * Math.sin(angles[i]);
+                    pushy += lengths[i] * Math.cos(angles[i]);
+                    this.pos.push({ x: pushx, y: pushy });
+                    this.prevPos.push({ x: pushx, y: pushy });
+                    this.vel.push({ x: 0.0, y: 0.0 });
+                }
+            }
+
+            simulate(dt, gravity) {
+                for (var i = 1; i < this.masses.length; i++) {
+                    this.vel[i].y += dt * gravity;
+                    this.prevPos[i].x = this.pos[i].x;
+                    this.prevPos[i].y = this.pos[i].y;
+                    this.pos[i].x += this.vel[i].x * dt;
+                    this.pos[i].y += this.vel[i].y * dt;
+                }
+                for (var i = 1; i < this.masses.length; i++) {
+                    var dx = this.pos[i].x - this.pos[i - 1].x;
+                    var dy = this.pos[i].y - this.pos[i - 1].y;
+                    var d = Math.sqrt(dx * dx + dy * dy);
+                    var w0 = this.masses[i - 1] > 0.0 ? 1.0 / this.masses[i - 1] : 0.0;
+                    var w1 = this.masses[i] > 0.0 ? 1.0 / this.masses[i] : 0.0;
+                    var corr = (this.lengths[i] - d) / d / (w0 + w1);
+                    this.pos[i - 1].x -= w0 * corr * dx;
+                    this.pos[i - 1].y -= w0 * corr * dy;
+                    this.pos[i].x += w1 * corr * dx;
+                    this.pos[i].y += w1 * corr * dy;
+                }
+                for (var i = 1; i < this.masses.length; i++) {
+                    this.vel[i].x = (this.pos[i].x - this.prevPos[i].x) / dt;
+                    this.vel[i].y = (this.pos[i].y - this.prevPos[i].y) / dt;
+                }
+            }
+
+            updateTrail() {
+                this.trail[this.trailLast] = cX(this.pos[this.pos.length - 1]);
+                this.trail[this.trailLast + 1] = cY(this.pos[this.pos.length - 1]);
+                this.trailLast = (this.trailLast + 2) % this.trail.length;
+                if (this.trailLast == this.trailFirst)
+                    this.trailFirst = (this.trailFirst + 2) % this.trail.length;
+            }
+            draw() {
+                c.strokeStyle = this.color;
+                c.lineWidth = 2.0;
+                if (this.trailLast != this.trailFirst) {
+                    var i = this.trailFirst;
+                    c.beginPath();
+                    c.moveTo(this.trail[i], this.trail[i + 1]);
+                    i = (i + 2) % this.trail.length;
+                    while (i != this.trailLast) {
+                        c.lineTo(this.trail[i], this.trail[i + 1]);
+                        i = (i + 2) % this.trail.length;
+                    }
+                    c.stroke();
+                }
+
+                var p = this;
+                c.strokeStyle = "#303030";
+                c.lineWidth = 10;
+                c.beginPath();
+                c.moveTo(cX(p.pos[0]), cY(p.pos[0]));
+                for (var i = 1; i < p.masses.length; i++)
+                    c.lineTo(cX(p.pos[i]), cY(p.pos[i]));
+                c.stroke();
+                c.lineWidth = 1;
+
+                c.fillStyle = this.color;
+                for (var i = 1; i < p.masses.length; i++) {
+                    var r = 0.03 * Math.sqrt(p.masses[i]);
+                    c.beginPath();
+                    c.arc(
+                        cX(p.pos[i]), cY(p.pos[i]), cScale * r, 0.0, 2.0 * Math.PI);
+                    c.closePath();
+                    c.fill();
+                }
+            }
+
+        }
+
+        var scene = {
+            gravity: -9.81,
+            timeStep: 0.01,
+            numSubSteps: 10000,
+            paused: true,
+            pendulumPBD: null
+        };
+
+        var sceneNr = 0;
+
+        function setupScene() {
+            var angles = [0.5 * Math.PI, Math.PI, Math.PI, Math.PI, Math.PI];
+            var lengths = [];
+            var masses = [];
+
+            switch (sceneNr % 6) {
+                case 0: {
+                    lengths = [0.15, 0.15, 0.15];
+                    masses = [1.0, 1.0, 1.0];
+                    break;
+                }
+                case 1: {
+                    lengths = [0.06, 0.15, 0.2];
+                    masses = [1.0, 0.5, 0.1];
+                    break;
+                }
+                case 2: {
+                    lengths = [0.15, 0.15, 0.15];
+                    masses = [1.0, 0.01, 1.0];
+                    break;
+                }
+                case 3: {
+                    lengths = [0.15, 0.15, 0.15];
+                    masses = [0.01, 1.0, 0.01];
+                    break;
+                }
+                case 4: {
+                    lengths = [0.2, 0.133, 0.04];
+                    masses = [0.3, 0.3, 0.3];
+                    break;
+                }
+                case 5: {
+                    lengths = [0.1, 0.12, 0.1, 0.15, 0.05];
+                    masses = [0.2, 0.6, 0.4, 0.3, 0.2];
+                    break;
+                }
+            }
+
+            scene.pendulumPBD = new Pendulum("#FF3030", masses, lengths, angles); // Remove 'true'
+            scene.paused = true;
+
+            sceneNr++;
+        }
+
+        function draw() {
+            c.fillStyle = "#000000";
+            c.fillRect(0, 0, canvas.width, canvas.height);
+            if (scene.pendulumPBD)
+                scene.pendulumPBD.draw();
+        }
+
+        function simulate() {
+            if (scene.paused)
+                return;
+            var sdt = scene.timeStep / scene.numSubSteps; // Use timeStep
+            var trailGap = Math.max(1, Math.floor(scene.numSubSteps / 10));
+
+            for (var step = 0; step < scene.numSubSteps; step++) {
+                if (scene.pendulumPBD) {
+                    scene.pendulumPBD.simulate(sdt, scene.gravity);
+                    if (step % trailGap == 0)
+                        scene.pendulumPBD.updateTrail();
+                }
+            }
+        }
+
+        document.getElementById("stepsSlider").oninput = function () {
+            var steps = [1, 5, 10, 100, 1000, 10000];
+            scene.numSubSteps = steps[Number(this.value)];
+            document.getElementById("steps").innerHTML = scene.numSubSteps.toString();
+        }
+
+        document.addEventListener("keydown", event => {
+            if (event.isComposing || event.keyCode === 229)
+                return;
+            if (event.key == 's')
+                step();
+        });
+
+        function run() {
+            scene.paused = false;
+        }
+
+        function step() {
+            scene.paused = false;
+            simulate();
+            scene.paused = true;
+        }
+
+        function update() {
+            simulate();
+            draw();
+            requestAnimationFrame(update);
+        }
+        setupScene();
+        update();
+
+    </script>
+</body>
+
+</html>
