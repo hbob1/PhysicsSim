@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Ions in Magnetic Field</title>
+  <style>
+    body { margin: 0; background: #111; overflow: hidden; color: white; font-family: Arial; }
+    canvas { display: block; margin: auto; background: #222; }
+    #controls {
+      position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); padding: 10px; border-radius: 10px;
+    }
+    label { display: block; margin-top: 5px; }
+  </style>
+</head>
+<body>
+<div id="controls">
+  <label>Amps (I): 
+    <input type="range" min="100" max="20000" value="10000" id="ampsSlider">
+    <span id="ampsVal">10000</span>
+  </label>
+  <label>Arrow Spacing:
+    <input type="range" min="0.05" max="0.2" step="0.01" value="0.1" id="spacingSlider">
+    <span id="spacingVal">0.1</span>
+  </label>
+  <label>Arrow Length Scale:
+    <input type="range" min="0.005" max="0.05" step="0.001" value="0.02" id="scaleSlider">
+    <span id="scaleVal">0.02</span>
+  </label>
+  <hr>
+  <label>Ion Charge (C): <input type="number" id="ionCharge" value="1.6e-19"></label>
+  <label>Ion Mass (kg): <input type="number" id="ionMass" value="1.67e-27"></label>
+  <label>Initial Speed (m/s): <input type="number" id="ionSpeed" value="1e6"></label>
+  <label>Initial Angle (deg): <input type="number" id="ionAngle" value="0"></label>
+  <label>Start X (m): <input type="number" id="ionX" value="-0.4"></label>
+  <label>Start Y (m): <input type="number" id="ionY" value="0.0"></label>
+  <button id="addIonBtn">Add Ion</button>
+  <button id="resetBtn">Clear Ions</button>
+  <hr>
+  <button id="redrawBtn">Redraw Field</button>
+</div>
+
+<canvas id="myCanvas"></canvas>
+
+<script>
+var canvas = document.getElementById("myCanvas");
+var c = canvas.getContext("2d");
+canvas.width = window.innerWidth - 20;
+canvas.height = window.innerHeight - 20;
+
+var simMinWidth = 1.0;
+var cScale = Math.min(canvas.width, canvas.height) / simMinWidth;
+function cX(pos) { return canvas.width / 2 + pos.x * cScale; }
+function cY(pos) { return 0.45 * canvas.height - pos.y * cScale; }
+
+const mu0 = 4 * Math.PI * 1e-7; 
+let I = 10000; 
+const wire = { x: 0, y: 0 };
+
+let step = 0.1;
+let arrowScale = 0.02;
+let ions = [];
+let dt = 1e-6;
+
+class Ion {
+  constructor(position, velocity, charge, mass, color="yellow", radius=0.005) {
+    this.position = {...position};
+    this.velocity = {...velocity};
+    this.charge = charge;
+    this.mass = mass;
+    this.color = color;
+    this.radius = radius;
+    this.path = [];
+  }
+  update() {
+    let F = lorentzForce(this);
+    this.velocity.x += (F.x / this.mass) * dt;
+    this.velocity.y += (F.y / this.mass) * dt;
+    this.position.x += this.velocity.x * dt;
+    this.position.y += this.velocity.y * dt;
+    this.path.push({x:this.position.x, y:this.position.y});
+    if (this.path.length > 500) this.path.shift();
+  }
+
+  draw() {
+    c.strokeStyle = this.color;
+    c.beginPath();
+    for(let i=0;i<this.path.length;i++){
+      c.lineTo(cX(this.path[i]), cY(this.path[i]));
+    }
+    c.stroke();
+    c.fillStyle = this.color;
+    c.beginPath();
+    c.arc(cX(this.position), cY(this.position), this.radius*cScale, 0, 2*Math.PI);
+    c.fill();
+  }
+}
+
+function lorentzForce(ion) {
+  var B = magneticField(ion.position);
+  var Bz = B.Bmag;
+  return {
+    x: ion.charge * ion.velocity.y * Bz,
+    y: -ion.charge * ion.velocity.x * Bz
+  };
+}
+
+function magneticField(pos) {
+  let dx = pos.x - wire.x;
+  let dy = pos.y - wire.y;
+  let r = Math.sqrt(dx*dx+dy*dy);
+  if (r<0.02) r = 0.02;
+  let Bmag = (mu0*I)/(2*Math.PI*r);
+  let tx = -dy / r;
+  let ty = dx / r;
+  return {Bx: Bmag*tx, By: Bmag*ty, Bmag};
+}
+
+function drawField() {
+  c.clearRect(0, 0, canvas.width, canvas.height);
+  for (let x=-0.5; x<=0.5; x+=step) {
+    for (let y=-0.5; y<=0.5; y+=step) {
+      let pos={x:x,y:y};
+      let B=magneticField(pos);
+      let x2=x+B.Bx*arrowScale/(B.Bmag||1e-9);
+      let y2=y+B.By*arrowScale/(B.Bmag||1e-9);
+      let dist=Math.sqrt(x*x+y*y);
+      let intensity=Math.min(255,Math.max(50,300/dist));
+      c.strokeStyle=`rgb(${intensity},${intensity},255)`;
+      c.beginPath();
+      c.moveTo(cX(pos),cY(pos));
+      c.lineTo(cX({x:x2,y:y2}),cY({x:x2,y:y2}));
+      c.stroke();
+    }
+  }
+  c.fillStyle="white";
+  c.beginPath();
+  c.arc(cX(wire),cY(wire),10,0,2*Math.PI);
+  c.fill();
+  c.font="16px Arial";
+  c.fillText("Wire ⨀ (current out of screen)", cX({x:0.05,y:0}), cY({x:0.05,y:0.05}));
+}
+
+document.getElementById("ampsSlider").oninput=function(){I=parseFloat(this.value);document.getElementById("ampsVal").innerText=I;}
+document.getElementById("spacingSlider").oninput=function(){step=parseFloat(this.value);document.getElementById("spacingVal").innerText=step.toFixed(2);}
+document.getElementById("scaleSlider").oninput=function(){arrowScale=parseFloat(this.value);document.getElementById("scaleVal").innerText=arrowScale.toFixed(3);}
+document.getElementById("redrawBtn").onclick=drawField;
+
+document.getElementById("addIonBtn").onclick=function(){
+  let q=parseFloat(document.getElementById("ionCharge").value);
+  let m=parseFloat(document.getElementById("ionMass").value);
+  let speed=parseFloat(document.getElementById("ionSpeed").value);
+  let angle=parseFloat(document.getElementById("ionAngle").value)*Math.PI/180;
+  let x=parseFloat(document.getElementById("ionX").value);
+  let y=parseFloat(document.getElementById("ionY").value);
+  let vx=speed*Math.cos(angle);
+  let vy=speed*Math.sin(angle);
+  ions.push(new Ion({x:x,y:y},{x:vx,y:vy},q,m,"yellow",0.005));
+};
+document.getElementById("resetBtn").onclick=function(){ions=[];}
+
+function animate(){
+  drawField();
+  for(let ion of ions){
+    ion.update();
+    ion.draw();
+  }
+  requestAnimationFrame(animate);
+}
+animate();
+</script>
+</body>
+</html>
